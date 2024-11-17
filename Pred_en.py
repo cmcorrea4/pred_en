@@ -44,9 +44,9 @@ def create_sequences(data, seq_length):
     for i in range(len(data) - seq_length):
         seq = data[i:i + seq_length]
         target = data[i + seq_length]
-        sequences.append(seq)
+        sequences.append(seq.reshape(-1, 1))  # Reshape para mantener la dimensionalidad correcta
         targets.append(target)
-    return torch.FloatTensor(sequences), torch.FloatTensor(targets)
+    return torch.FloatTensor(np.array(sequences)), torch.FloatTensor(targets)
 
 # Función para cargar datos
 def load_data(file):
@@ -69,15 +69,15 @@ def predict_future(model, last_sequence, n_steps, mean, std):
     with torch.no_grad():
         for _ in range(n_steps):
             # Preparar input
-            x = current_sequence.view(1, -1, 1)
+            x = current_sequence.unsqueeze(0)  # Añadir dimensión de batch
             
             # Predecir siguiente valor
             pred = model(x)
             predictions.append(pred.item())
             
             # Actualizar secuencia
-            current_sequence = torch.roll(current_sequence, -1)
-            current_sequence[-1] = pred
+            current_sequence = torch.roll(current_sequence, -1, dims=0)
+            current_sequence[-1] = pred.squeeze()
     
     # Desnormalizar predicciones
     predictions = denormalize_data(np.array(predictions), mean, std)
@@ -135,9 +135,8 @@ if uploaded_file is not None:
                         optimizer.zero_grad()
                         
                         # Forward pass
-                        X_tensor = X.view(-1, seq_length, 1)
-                        outputs = model(X_tensor)
-                        loss = criterion(outputs, y.view(-1, 1))
+                        outputs = model(X)
+                        loss = criterion(outputs.squeeze(), y)
                         
                         # Backward pass
                         loss.backward()
@@ -147,7 +146,7 @@ if uploaded_file is not None:
                         progress_bar.progress((epoch + 1) / epochs)
                     
                     # Realizar predicciones
-                    last_sequence = torch.FloatTensor(data_normalized[-seq_length:])
+                    last_sequence = torch.FloatTensor(data_normalized[-seq_length:]).reshape(-1, 1)
                     predictions = predict_future(model, last_sequence, prediction_hours, mean, std)
                     
                     # Crear fechas para predicciones
