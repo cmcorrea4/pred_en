@@ -2,9 +2,8 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 from sklearn.preprocessing import MinMaxScaler
-import tensorflow as tf
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import LSTM, Dense, Dropout
+from keras.models import Sequential
+from keras.layers import LSTM, Dense, Dropout
 import altair as alt
 from datetime import datetime, timedelta
 
@@ -90,6 +89,8 @@ if uploaded_file is not None:
                                      min_value=1, max_value=48, value=24)
         prediction_hours = st.sidebar.slider("Horas a predecir", 
                                            min_value=1, max_value=72, value=24)
+        epochs = st.sidebar.slider("Épocas de entrenamiento", 
+                                 min_value=10, max_value=100, value=50)
         
         # Botón de entrenamiento
         train_button = st.sidebar.button("Entrenar Modelo")
@@ -100,90 +101,94 @@ if uploaded_file is not None:
         
         if train_button:
             with st.spinner('Entrenando el modelo...'):
-                # Preparar datos
-                data = df['Kwh'].values.reshape(-1, 1)
-                scaler = MinMaxScaler()
-                data_scaled = scaler.fit_transform(data)
-                
-                # Crear secuencias
-                X, y = create_sequences(data_scaled, seq_length)
-                
-                # Dividir datos en entrenamiento y validación
-                train_size = int(len(X) * 0.8)
-                X_train, X_val = X[:train_size], X[train_size:]
-                y_train, y_val = y[:train_size], y[train_size:]
-                
-                # Crear y entrenar modelo
-                model = create_model(seq_length)
-                history = model.fit(
-                    X_train, y_train,
-                    validation_data=(X_val, y_val),
-                    epochs=50,
-                    batch_size=32,
-                    verbose=0
-                )
-                
-                # Realizar predicciones
-                last_sequence = data_scaled[-seq_length:]
-                predictions = predict_future(model, last_sequence, prediction_hours, scaler)
-                
-                # Crear fechas para las predicciones
-                last_date = df['Datetime'].iloc[-1]
-                future_dates = [last_date + timedelta(hours=i+1) for i in range(len(predictions))]
-                
-                # Crear DataFrame con predicciones
-                predictions_df = pd.DataFrame({
-                    'Datetime': future_dates,
-                    'Kwh_Predicted': predictions
-                })
-                
-                # Visualización de resultados
-                st.header("📈 Resultados de la Predicción")
-                
-                # Preparar datos para la visualización
-                historical_data = df[['Datetime', 'Kwh']].copy()
-                historical_data['Tipo'] = 'Histórico'
-                predictions_df['Tipo'] = 'Predicción'
-                
-                # Combinar datos históricos y predicciones
-                viz_data = pd.concat([
-                    historical_data.rename(columns={'Kwh': 'Valor'}),
-                    predictions_df.rename(columns={'Kwh_Predicted': 'Valor'})
-                ])
-                
-                # Crear gráfico
-                chart = alt.Chart(viz_data).mark_line().encode(
-                    x=alt.X('Datetime:T', title='Fecha y Hora'),
-                    y=alt.Y('Valor:Q', title='Consumo (kWh)'),
-                    color=alt.Color('Tipo:N', 
-                                  scale=alt.Scale(domain=['Histórico', 'Predicción'],
-                                                range=['#1f77b4', '#ff7f0e']))
-                ).properties(
-                    width=800,
-                    height=400
-                ).interactive()
-                
-                st.altair_chart(chart, use_container_width=True)
-                
-                # Mostrar métricas de rendimiento
-                st.header("📊 Métricas del Modelo")
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.metric("Error de Entrenamiento (MSE)", 
-                             f"{history.history['loss'][-1]:.4f}")
-                with col2:
-                    st.metric("Error de Validación (MSE)", 
-                             f"{history.history['val_loss'][-1]:.4f}")
-                
-                # Descargar predicciones
-                st.header("💾 Descargar Predicciones")
-                csv = predictions_df.to_csv(index=False)
-                st.download_button(
-                    label="Descargar predicciones como CSV",
-                    data=csv,
-                    file_name="predicciones.csv",
-                    mime="text/csv"
-                )
+                try:
+                    # Preparar datos
+                    data = df['Kwh'].values.reshape(-1, 1)
+                    scaler = MinMaxScaler()
+                    data_scaled = scaler.fit_transform(data)
+                    
+                    # Crear secuencias
+                    X, y = create_sequences(data_scaled, seq_length)
+                    
+                    # Dividir datos en entrenamiento y validación
+                    train_size = int(len(X) * 0.8)
+                    X_train, X_val = X[:train_size], X[train_size:]
+                    y_train, y_val = y[:train_size], y[train_size:]
+                    
+                    # Crear y entrenar modelo
+                    model = create_model(seq_length)
+                    history = model.fit(
+                        X_train, y_train,
+                        validation_data=(X_val, y_val),
+                        epochs=epochs,
+                        batch_size=32,
+                        verbose=0
+                    )
+                    
+                    # Realizar predicciones
+                    last_sequence = data_scaled[-seq_length:]
+                    predictions = predict_future(model, last_sequence, prediction_hours, scaler)
+                    
+                    # Crear fechas para las predicciones
+                    last_date = df['Datetime'].iloc[-1]
+                    future_dates = [last_date + timedelta(hours=i+1) for i in range(len(predictions))]
+                    
+                    # Crear DataFrame con predicciones
+                    predictions_df = pd.DataFrame({
+                        'Datetime': future_dates,
+                        'Kwh_Predicted': predictions
+                    })
+                    
+                    # Visualización de resultados
+                    st.header("📈 Resultados de la Predicción")
+                    
+                    # Preparar datos para la visualización
+                    historical_data = df[['Datetime', 'Kwh']].copy()
+                    historical_data['Tipo'] = 'Histórico'
+                    predictions_df['Tipo'] = 'Predicción'
+                    
+                    # Combinar datos históricos y predicciones
+                    viz_data = pd.concat([
+                        historical_data.rename(columns={'Kwh': 'Valor'}),
+                        predictions_df.rename(columns={'Kwh_Predicted': 'Valor'})
+                    ])
+                    
+                    # Crear gráfico
+                    chart = alt.Chart(viz_data).mark_line().encode(
+                        x=alt.X('Datetime:T', title='Fecha y Hora'),
+                        y=alt.Y('Valor:Q', title='Consumo (kWh)'),
+                        color=alt.Color('Tipo:N', 
+                                      scale=alt.Scale(domain=['Histórico', 'Predicción'],
+                                                    range=['#1f77b4', '#ff7f0e']))
+                    ).properties(
+                        width=800,
+                        height=400
+                    ).interactive()
+                    
+                    st.altair_chart(chart, use_container_width=True)
+                    
+                    # Mostrar métricas de rendimiento
+                    st.header("📊 Métricas del Modelo")
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.metric("Error de Entrenamiento (MSE)", 
+                                 f"{history.history['loss'][-1]:.4f}")
+                    with col2:
+                        st.metric("Error de Validación (MSE)", 
+                                 f"{history.history['val_loss'][-1]:.4f}")
+                    
+                    # Descargar predicciones
+                    st.header("💾 Descargar Predicciones")
+                    csv = predictions_df.to_csv(index=False)
+                    st.download_button(
+                        label="Descargar predicciones como CSV",
+                        data=csv,
+                        file_name="predicciones.csv",
+                        mime="text/csv"
+                    )
+                except Exception as e:
+                    st.error(f"Error durante el entrenamiento: {str(e)}")
+                    st.info("Intenta ajustar los parámetros del modelo o verificar los datos de entrada.")
                 
 else:
     st.info("👆 Por favor, carga un archivo CSV para comenzar el análisis.")
@@ -191,14 +196,6 @@ else:
     El archivo CSV debe contener las siguientes columnas:
     - `Datetime`: Fecha y hora de la medición
     - `Kwh`: Consumo eléctrico en kilovatios-hora
-    
-    Formato esperado:
-    ```
-    ,Datetime,Kwh
-    0,2024-11-01 00:00:00,0.14625
-    1,2024-11-01 01:00:00,0.12281
-    ...
-    ```
     """)
 
 # Agregar información sobre el uso
@@ -207,6 +204,6 @@ st.sidebar.markdown("""
 ### Información de Uso
 - Ajusta la longitud de secuencia según el patrón temporal que quieras capturar
 - Define cuántas horas hacia el futuro quieres predecir
-- El modelo LSTM aprenderá patrones en los datos históricos
+- Ajusta el número de épocas de entrenamiento según sea necesario
 - Las predicciones se muestran en naranja en el gráfico
 """)
