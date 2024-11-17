@@ -202,6 +202,30 @@ if uploaded_file is not None:
                         mime="text/csv"
                     )
                     
+                    # Mostrar tabla de predicciones
+                    st.header("📋 Tabla de Predicciones")
+                    # Formatear la columna Datetime para mejor visualización
+                    predictions_df['Datetime'] = predictions_df['Datetime'].dt.strftime('%Y-%m-%d %H:%M:%S')
+                    # Renombrar columnas para mejor claridad
+                    predictions_display = predictions_df.copy()
+                    predictions_display.columns = ['Fecha y Hora', 'Consumo Predicho (kWh)']
+                    # Mostrar el DataFrame con las predicciones
+                    st.dataframe(predictions_display.style.format({
+                        'Consumo Predicho (kWh)': '{:.4f}'
+                    }))
+                    
+                    # Mostrar estadísticas de las predicciones
+                    st.subheader("📊 Estadísticas de las Predicciones")
+                    stats_df = pd.DataFrame({
+                        'Métrica': ['Consumo Mínimo', 'Consumo Máximo', 'Consumo Promedio'],
+                        'Valor (kWh)': [
+                            f"{predictions_df['Kwh_Predicted'].min():.4f}",
+                            f"{predictions_df['Kwh_Predicted'].max():.4f}",
+                            f"{predictions_df['Kwh_Predicted'].mean():.4f}"
+                        ]
+                    })
+                    st.dataframe(stats_df)
+                    
                 except Exception as e:
                     st.error(f"Error durante el entrenamiento: {str(e)}")
                     st.info("Intenta ajustar los parámetros del modelo o verificar los datos.")
