@@ -2,24 +2,20 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 from sklearn.preprocessing import MinMaxScaler
-from keras.models import Sequential
-from keras.layers import LSTM, Dense, Dropout
+from sklearn.neural_network import MLPRegressor
 import altair as alt
 from datetime import datetime, timedelta
 
 # Configuración de la página
-st.set_page_config(page_title="Predicción de Consumo Eléctrico - LSTM", layout="wide")
+st.set_page_config(page_title="Predicción de Consumo Eléctrico", layout="wide")
 
 # Función para crear secuencias de datos para el entrenamiento
 def create_sequences(data, seq_length):
-    sequences = []
-    targets = []
+    X, y = [], []
     for i in range(len(data) - seq_length):
-        seq = data[i:i + seq_length]
-        target = data[i + seq_length]
-        sequences.append(seq)
-        targets.append(target)
-    return np.array(sequences), np.array(targets)
+        X.append(data[i:(i + seq_length)])
+        y.append(data[i + seq_length])
+    return np.array(X), np.array(y)
 
 # Función para cargar y preprocesar datos
 def load_data(file):
@@ -41,27 +37,18 @@ def load_data(file):
         st.error(f"Error al cargar los datos: {str(e)}")
         return None
 
-# Función para crear y entrenar el modelo LSTM
-def create_model(seq_length):
-    model = Sequential([
-        LSTM(50, activation='relu', input_shape=(seq_length, 1), return_sequences=True),
-        Dropout(0.2),
-        LSTM(50, activation='relu'),
-        Dropout(0.2),
-        Dense(1)
-    ])
-    model.compile(optimizer='adam', loss='mse')
-    return model
-
 # Función para realizar predicciones
 def predict_future(model, last_sequence, n_steps, scaler):
     predictions = []
     current_sequence = last_sequence.copy()
     
     for _ in range(n_steps):
+        # Preparar la secuencia para la predicción
+        X = current_sequence.reshape(1, -1)
+        
         # Realizar predicción
-        prediction = model.predict(current_sequence.reshape(1, -1, 1), verbose=0)
-        predictions.append(prediction[0, 0])
+        prediction = model.predict(X)
+        predictions.append(prediction[0])
         
         # Actualizar la secuencia
         current_sequence = np.roll(current_sequence, -1)
@@ -72,7 +59,7 @@ def predict_future(model, last_sequence, n_steps, scaler):
     return predictions.flatten()
 
 # Título de la aplicación
-st.title("🔮 Predicción de Consumo Eléctrico con LSTM")
+st.title("🔮 Predicción de Consumo Eléctrico")
 
 # Sidebar para configuración
 st.sidebar.header("Configuración")
@@ -83,14 +70,16 @@ if uploaded_file is not None:
     df = load_data(uploaded_file)
     
     if df is not None:
-        # Parámetros de la red neuronal
+        # Parámetros del modelo
         st.sidebar.header("Parámetros del Modelo")
         seq_length = st.sidebar.slider("Longitud de secuencia (horas)", 
                                      min_value=1, max_value=48, value=24)
         prediction_hours = st.sidebar.slider("Horas a predecir", 
                                            min_value=1, max_value=72, value=24)
-        epochs = st.sidebar.slider("Épocas de entrenamiento", 
-                                 min_value=10, max_value=100, value=50)
+        hidden_layers = st.sidebar.slider("Capas ocultas", 
+                                        min_value=1, max_value=3, value=2)
+        neurons = st.sidebar.slider("Neuronas por capa", 
+                                  min_value=10, max_value=100, value=50)
         
         # Botón de entrenamiento
         train_button = st.sidebar.button("Entrenar Modelo")
@@ -109,6 +98,7 @@ if uploaded_file is not None:
                     
                     # Crear secuencias
                     X, y = create_sequences(data_scaled, seq_length)
+                    X = X.reshape(X.shape[0], -1)  # Aplanar para MLPRegressor
                     
                     # Dividir datos en entrenamiento y validación
                     train_size = int(len(X) * 0.8)
@@ -116,14 +106,13 @@ if uploaded_file is not None:
                     y_train, y_val = y[:train_size], y[train_size:]
                     
                     # Crear y entrenar modelo
-                    model = create_model(seq_length)
-                    history = model.fit(
-                        X_train, y_train,
-                        validation_data=(X_val, y_val),
-                        epochs=epochs,
-                        batch_size=32,
-                        verbose=0
+                    hidden_layer_sizes = tuple([neurons] * hidden_layers)
+                    model = MLPRegressor(
+                        hidden_layer_sizes=hidden_layer_sizes,
+                        max_iter=1000,
+                        random_state=42
                     )
+                    model.fit(X_train, y_train)
                     
                     # Realizar predicciones
                     last_sequence = data_scaled[-seq_length:]
@@ -169,13 +158,14 @@ if uploaded_file is not None:
                     
                     # Mostrar métricas de rendimiento
                     st.header("📊 Métricas del Modelo")
+                    train_score = model.score(X_train, y_train)
+                    val_score = model.score(X_val, y_val)
+                    
                     col1, col2 = st.columns(2)
                     with col1:
-                        st.metric("Error de Entrenamiento (MSE)", 
-                                 f"{history.history['loss'][-1]:.4f}")
+                        st.metric("R² Score (Entrenamiento)", f"{train_score:.4f}")
                     with col2:
-                        st.metric("Error de Validación (MSE)", 
-                                 f"{history.history['val_loss'][-1]:.4f}")
+                        st.metric("R² Score (Validación)", f"{val_score:.4f}")
                     
                     # Descargar predicciones
                     st.header("💾 Descargar Predicciones")
@@ -186,6 +176,7 @@ if uploaded_file is not None:
                         file_name="predicciones.csv",
                         mime="text/csv"
                     )
+                    
                 except Exception as e:
                     st.error(f"Error durante el entrenamiento: {str(e)}")
                     st.info("Intenta ajustar los parámetros del modelo o verificar los datos de entrada.")
@@ -202,8 +193,8 @@ else:
 st.sidebar.markdown("""
 ---
 ### Información de Uso
-- Ajusta la longitud de secuencia según el patrón temporal que quieras capturar
-- Define cuántas horas hacia el futuro quieres predecir
-- Ajusta el número de épocas de entrenamiento según sea necesario
+- Ajusta la longitud de secuencia según el patrón temporal
+- Define cuántas horas hacia el futuro predecir
+- Configura la arquitectura de la red neuronal
 - Las predicciones se muestran en naranja en el gráfico
 """)
