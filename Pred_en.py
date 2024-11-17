@@ -1,85 +1,108 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from sklearn.preprocessing import MinMaxScaler
-from sklearn.neural_network import MLPRegressor
+import torch
+import torch.nn as nn
 import altair as alt
 from datetime import datetime, timedelta
 
 # Configuración de la página
-st.set_page_config(page_title="Predicción de Consumo Eléctrico", layout="wide")
+st.set_page_config(page_title="Predicción de Consumo Eléctrico - LSTM", layout="wide")
 
-# Función para crear secuencias de datos para el entrenamiento
+# Definición del modelo LSTM
+class LSTMPredictor(nn.Module):
+    def __init__(self, input_size=1, hidden_size=50, num_layers=2):
+        super(LSTMPredictor, self).__init__()
+        self.hidden_size = hidden_size
+        self.num_layers = num_layers
+        
+        self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True)
+        self.fc = nn.Linear(hidden_size, 1)
+    
+    def forward(self, x):
+        h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size)
+        c0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size)
+        
+        out, _ = self.lstm(x, (h0, c0))
+        out = self.fc(out[:, -1, :])
+        return out
+
+# Función para normalizar datos
+def normalize_data(data):
+    mean = np.mean(data)
+    std = np.std(data)
+    return (data - mean) / std, mean, std
+
+# Función para desnormalizar datos
+def denormalize_data(data, mean, std):
+    return data * std + mean
+
+# Función para crear secuencias
 def create_sequences(data, seq_length):
-    X, y = [], []
+    sequences = []
+    targets = []
     for i in range(len(data) - seq_length):
-        X.append(data[i:(i + seq_length)])
-        y.append(data[i + seq_length])
-    return np.array(X), np.array(y)
+        seq = data[i:i + seq_length]
+        target = data[i + seq_length]
+        sequences.append(seq)
+        targets.append(target)
+    return torch.FloatTensor(sequences), torch.FloatTensor(targets)
 
-# Función para cargar y preprocesar datos
+# Función para cargar datos
 def load_data(file):
     try:
-        # Cargar el archivo CSV
         df = pd.read_csv(file, index_col=0)
-        
-        # Convertir la columna Datetime a datetime
         df['Datetime'] = pd.to_datetime(df['Datetime'])
-        
-        # Eliminar filas con valores faltantes
         df = df.dropna()
-        
-        # Ordenar por fecha
         df = df.sort_values('Datetime')
-        
         return df
     except Exception as e:
         st.error(f"Error al cargar los datos: {str(e)}")
         return None
 
 # Función para realizar predicciones
-def predict_future(model, last_sequence, n_steps, scaler):
+def predict_future(model, last_sequence, n_steps, mean, std):
+    model.eval()
     predictions = []
-    current_sequence = last_sequence.copy()
+    current_sequence = last_sequence.clone()
     
-    for _ in range(n_steps):
-        # Preparar la secuencia para la predicción
-        X = current_sequence.reshape(1, -1)
-        
-        # Realizar predicción
-        prediction = model.predict(X)
-        predictions.append(prediction[0])
-        
-        # Actualizar la secuencia
-        current_sequence = np.roll(current_sequence, -1)
-        current_sequence[-1] = prediction
+    with torch.no_grad():
+        for _ in range(n_steps):
+            # Preparar input
+            x = current_sequence.view(1, -1, 1)
+            
+            # Predecir siguiente valor
+            pred = model(x)
+            predictions.append(pred.item())
+            
+            # Actualizar secuencia
+            current_sequence = torch.roll(current_sequence, -1)
+            current_sequence[-1] = pred
     
-    # Desescalar predicciones
-    predictions = scaler.inverse_transform(np.array(predictions).reshape(-1, 1))
-    return predictions.flatten()
+    # Desnormalizar predicciones
+    predictions = denormalize_data(np.array(predictions), mean, std)
+    return predictions
 
 # Título de la aplicación
-st.title("🔮 Predicción de Consumo Eléctrico")
+st.title("🔮 Predicción de Consumo Eléctrico con LSTM")
 
-# Sidebar para configuración
+# Configuración en la barra lateral
 st.sidebar.header("Configuración")
 uploaded_file = st.sidebar.file_uploader("Cargar archivo CSV", type=['csv'])
 
 if uploaded_file is not None:
-    # Cargar datos
     df = load_data(uploaded_file)
     
     if df is not None:
-        # Parámetros del modelo
         st.sidebar.header("Parámetros del Modelo")
         seq_length = st.sidebar.slider("Longitud de secuencia (horas)", 
                                      min_value=1, max_value=48, value=24)
         prediction_hours = st.sidebar.slider("Horas a predecir", 
                                            min_value=1, max_value=72, value=24)
-        hidden_layers = st.sidebar.slider("Capas ocultas", 
-                                        min_value=1, max_value=3, value=2)
-        neurons = st.sidebar.slider("Neuronas por capa", 
-                                  min_value=10, max_value=100, value=50)
+        hidden_size = st.sidebar.slider("Tamaño capa oculta", 
+                                      min_value=10, max_value=100, value=50)
+        epochs = st.sidebar.slider("Épocas de entrenamiento", 
+                                 min_value=10, max_value=200, value=50)
         
         # Botón de entrenamiento
         train_button = st.sidebar.button("Entrenar Modelo")
@@ -92,51 +115,59 @@ if uploaded_file is not None:
             with st.spinner('Entrenando el modelo...'):
                 try:
                     # Preparar datos
-                    data = df['Kwh'].values.reshape(-1, 1)
-                    scaler = MinMaxScaler()
-                    data_scaled = scaler.fit_transform(data)
+                    data = df['Kwh'].values
+                    data_normalized, mean, std = normalize_data(data)
                     
                     # Crear secuencias
-                    X, y = create_sequences(data_scaled, seq_length)
-                    X = X.reshape(X.shape[0], -1)  # Aplanar para MLPRegressor
-                    
-                    # Dividir datos en entrenamiento y validación
-                    train_size = int(len(X) * 0.8)
-                    X_train, X_val = X[:train_size], X[train_size:]
-                    y_train, y_val = y[:train_size], y[train_size:]
+                    X, y = create_sequences(data_normalized, seq_length)
                     
                     # Crear y entrenar modelo
-                    hidden_layer_sizes = tuple([neurons] * hidden_layers)
-                    model = MLPRegressor(
-                        hidden_layer_sizes=hidden_layer_sizes,
-                        max_iter=1000,
-                        random_state=42
-                    )
-                    model.fit(X_train, y_train)
+                    model = LSTMPredictor(hidden_size=hidden_size)
+                    criterion = nn.MSELoss()
+                    optimizer = torch.optim.Adam(model.parameters())
+                    
+                    # Entrenamiento
+                    progress_bar = st.progress(0)
+                    train_losses = []
+                    
+                    for epoch in range(epochs):
+                        model.train()
+                        optimizer.zero_grad()
+                        
+                        # Forward pass
+                        X_tensor = X.view(-1, seq_length, 1)
+                        outputs = model(X_tensor)
+                        loss = criterion(outputs, y.view(-1, 1))
+                        
+                        # Backward pass
+                        loss.backward()
+                        optimizer.step()
+                        
+                        train_losses.append(loss.item())
+                        progress_bar.progress((epoch + 1) / epochs)
                     
                     # Realizar predicciones
-                    last_sequence = data_scaled[-seq_length:]
-                    predictions = predict_future(model, last_sequence, prediction_hours, scaler)
+                    last_sequence = torch.FloatTensor(data_normalized[-seq_length:])
+                    predictions = predict_future(model, last_sequence, prediction_hours, mean, std)
                     
-                    # Crear fechas para las predicciones
+                    # Crear fechas para predicciones
                     last_date = df['Datetime'].iloc[-1]
                     future_dates = [last_date + timedelta(hours=i+1) for i in range(len(predictions))]
                     
-                    # Crear DataFrame con predicciones
+                    # DataFrame de predicciones
                     predictions_df = pd.DataFrame({
                         'Datetime': future_dates,
                         'Kwh_Predicted': predictions
                     })
                     
-                    # Visualización de resultados
+                    # Visualización
                     st.header("📈 Resultados de la Predicción")
                     
-                    # Preparar datos para la visualización
+                    # Preparar datos para visualización
                     historical_data = df[['Datetime', 'Kwh']].copy()
                     historical_data['Tipo'] = 'Histórico'
                     predictions_df['Tipo'] = 'Predicción'
                     
-                    # Combinar datos históricos y predicciones
                     viz_data = pd.concat([
                         historical_data.rename(columns={'Kwh': 'Valor'}),
                         predictions_df.rename(columns={'Kwh_Predicted': 'Valor'})
@@ -156,16 +187,10 @@ if uploaded_file is not None:
                     
                     st.altair_chart(chart, use_container_width=True)
                     
-                    # Mostrar métricas de rendimiento
+                    # Mostrar pérdida de entrenamiento
                     st.header("📊 Métricas del Modelo")
-                    train_score = model.score(X_train, y_train)
-                    val_score = model.score(X_val, y_val)
-                    
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        st.metric("R² Score (Entrenamiento)", f"{train_score:.4f}")
-                    with col2:
-                        st.metric("R² Score (Validación)", f"{val_score:.4f}")
+                    final_loss = train_losses[-1]
+                    st.metric("Error de Entrenamiento (MSE)", f"{final_loss:.6f}")
                     
                     # Descargar predicciones
                     st.header("💾 Descargar Predicciones")
@@ -179,8 +204,7 @@ if uploaded_file is not None:
                     
                 except Exception as e:
                     st.error(f"Error durante el entrenamiento: {str(e)}")
-                    st.info("Intenta ajustar los parámetros del modelo o verificar los datos de entrada.")
-                
+                    st.info("Intenta ajustar los parámetros del modelo o verificar los datos.")
 else:
     st.info("👆 Por favor, carga un archivo CSV para comenzar el análisis.")
     st.markdown("""
@@ -189,12 +213,12 @@ else:
     - `Kwh`: Consumo eléctrico en kilovatios-hora
     """)
 
-# Agregar información sobre el uso
+# Información de uso
 st.sidebar.markdown("""
 ---
 ### Información de Uso
 - Ajusta la longitud de secuencia según el patrón temporal
 - Define cuántas horas hacia el futuro predecir
-- Configura la arquitectura de la red neuronal
-- Las predicciones se muestran en naranja en el gráfico
+- Modifica el tamaño de la capa oculta para ajustar la complejidad del modelo
+- Aumenta las épocas de entrenamiento para mejor precisión
 """)
