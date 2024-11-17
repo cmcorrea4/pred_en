@@ -1,95 +1,3 @@
-import streamlit as st
-import pandas as pd
-import numpy as np
-import torch
-import torch.nn as nn
-import altair as alt
-from datetime import datetime, timedelta
-
-# Configuración de la página
-st.set_page_config(page_title="Predicción de Consumo Eléctrico - LSTM", layout="wide")
-
-# Definición del modelo LSTM
-class LSTMPredictor(nn.Module):
-    def __init__(self, input_size=1, hidden_size=50, num_layers=2):
-        super(LSTMPredictor, self).__init__()
-        self.hidden_size = hidden_size
-        self.num_layers = num_layers
-        
-        self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True)
-        self.fc = nn.Linear(hidden_size, 1)
-    
-    def forward(self, x):
-        h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size)
-        c0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size)
-        
-        out, _ = self.lstm(x, (h0, c0))
-        out = self.fc(out[:, -1, :])
-        return out
-
-# Función para normalizar datos
-def normalize_data(data):
-    mean = np.mean(data)
-    std = np.std(data)
-    return (data - mean) / std, mean, std
-
-# Función para desnormalizar datos
-def denormalize_data(data, mean, std):
-    return data * std + mean
-
-# Función para crear secuencias
-def create_sequences(data, seq_length):
-    sequences = []
-    targets = []
-    for i in range(len(data) - seq_length):
-        seq = data[i:i + seq_length]
-        target = data[i + seq_length]
-        sequences.append(seq.reshape(-1, 1))  # Reshape para mantener la dimensionalidad correcta
-        targets.append(target)
-    return torch.FloatTensor(np.array(sequences)), torch.FloatTensor(targets)
-
-# Función para cargar datos
-def load_data(file):
-    try:
-        df = pd.read_csv(file, index_col=0)
-        df['Datetime'] = pd.to_datetime(df['Datetime'])
-        df = df.dropna()
-        df = df.sort_values('Datetime')
-        return df
-    except Exception as e:
-        st.error(f"Error al cargar los datos: {str(e)}")
-        return None
-
-# Función para realizar predicciones
-def predict_future(model, last_sequence, n_steps, mean, std):
-    model.eval()
-    predictions = []
-    current_sequence = last_sequence.clone()
-    
-    with torch.no_grad():
-        for _ in range(n_steps):
-            # Preparar input
-            x = current_sequence.unsqueeze(0)  # Añadir dimensión de batch
-            
-            # Predecir siguiente valor
-            pred = model(x)
-            predictions.append(pred.item())
-            
-            # Actualizar secuencia
-            current_sequence = torch.roll(current_sequence, -1, dims=0)
-            current_sequence[-1] = pred.squeeze()
-    
-    # Desnormalizar predicciones
-    predictions = denormalize_data(np.array(predictions), mean, std)
-    return predictions
-
-# Título de la aplicación
-st.title("🔮 Predicción de Consumo Eléctrico con LSTM")
-
-# Configuración en la barra lateral
-st.sidebar.header("Configuración")
-uploaded_file = st.sidebar.file_uploader("Cargar archivo CSV", type=['csv'])
-
 if uploaded_file is not None:
     df = load_data(uploaded_file)
     
@@ -191,39 +99,24 @@ if uploaded_file is not None:
                     final_loss = train_losses[-1]
                     st.metric("Error de Entrenamiento (MSE)", f"{final_loss:.6f}")
                     
+                    # Tabla de predicciones futuras
+                    st.header("📋 Predicciones de Consumo Futuro")
+                    # Crear una tabla solo con las predicciones futuras
+                    predictions_table = pd.DataFrame({
+                        'Fecha y Hora': pd.to_datetime(future_dates).strftime('%Y-%m-%d %H:%M:%S'),
+                        'Predicción (kWh)': predictions.round(4)
+                    })
+                    st.dataframe(predictions_table)
+                    
                     # Descargar predicciones
                     st.header("💾 Descargar Predicciones")
-                    csv = predictions_df.to_csv(index=False)
+                    csv = predictions_table.to_csv(index=False)
                     st.download_button(
                         label="Descargar predicciones como CSV",
                         data=csv,
                         file_name="predicciones.csv",
                         mime="text/csv"
                     )
-                    
-                    # Mostrar tabla de predicciones
-                    st.header("📋 Tabla de Predicciones")
-                    # Formatear la columna Datetime para mejor visualización
-                    predictions_df['Datetime'] = predictions_df['Datetime'].dt.strftime('%Y-%m-%d %H:%M:%S')
-                    # Renombrar columnas para mejor claridad
-                    predictions_display = predictions_df.copy()
-                    predictions_display.columns = ['Fecha y Hora', 'Consumo Predicho (kWh)']
-                    # Mostrar el DataFrame con las predicciones
-                    st.dataframe(predictions_display.style.format({
-                        'Consumo Predicho (kWh)': '{:.4f}'
-                    }))
-                    
-                    # Mostrar estadísticas de las predicciones
-                    st.subheader("📊 Estadísticas de las Predicciones")
-                    stats_df = pd.DataFrame({
-                        'Métrica': ['Consumo Mínimo', 'Consumo Máximo', 'Consumo Promedio'],
-                        'Valor (kWh)': [
-                            f"{predictions_df['Kwh_Predicted'].min():.4f}",
-                            f"{predictions_df['Kwh_Predicted'].max():.4f}",
-                            f"{predictions_df['Kwh_Predicted'].mean():.4f}"
-                        ]
-                    })
-                    st.dataframe(stats_df)
                     
                 except Exception as e:
                     st.error(f"Error durante el entrenamiento: {str(e)}")
