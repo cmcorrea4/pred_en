@@ -5,3 +5,4 @@ numpy==1.26.3
 altair==5.2.0
 python-dateutil==2.8.2
 scikit-learn altair python-dateutil
+keras
