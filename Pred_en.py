@@ -62,21 +62,35 @@ def create_sequences(data, seq_length):
 
 def load_data(file):
     try:
-        df = pd.read_csv(file, index_col=0)
-        
-        # Verificar el formato de las columnas
-        if 'Datetime' in df.columns:
-            df['Datetime'] = pd.to_datetime(df['Datetime'])
-            df = df.dropna()
-            return df.sort_values('Datetime')
-        elif 'Time' in df.columns:
-            df['Time'] = pd.to_datetime(df['Time'])
-            # Renombrar la columna Time a Datetime para mantener consistencia
+        # Intentar leer el archivo primero como XML
+        try:
+            import xml.etree.ElementTree as ET
+            tree = ET.parse(file)
+            root = tree.getroot()
+            content = root.find('.//document_content').text
+            
+            # Convertir el contenido a un DataFrame
+            import io
+            df = pd.read_csv(io.StringIO(content), parse_dates=['Time'])
             df = df.rename(columns={'Time': 'Datetime'})
             df = df.dropna()
             return df.sort_values('Datetime')
-        else:
-            raise ValueError("El archivo debe contener una columna 'Datetime' o 'Time'")
+            
+        except (ET.ParseError, AttributeError):
+            # Si no es XML, intentar leer como CSV normal
+            df = pd.read_csv(file, index_col=0)
+            
+            # Verificar el formato de las columnas
+            if 'Datetime' in df.columns:
+                df['Datetime'] = pd.to_datetime(df['Datetime'])
+            elif 'Time' in df.columns:
+                df['Time'] = pd.to_datetime(df['Time'])
+                df = df.rename(columns={'Time': 'Datetime'})
+            else:
+                raise ValueError("El archivo debe contener una columna 'Datetime' o 'Time'")
+            
+            df = df.dropna()
+            return df.sort_values('Datetime')
             
     except Exception as e:
         st.error(f"Error al cargar los datos: {str(e)}")
