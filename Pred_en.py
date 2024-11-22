@@ -51,17 +51,37 @@ def create_sequences(data, seq_length):
 
 # Función para cargar datos
 
+#def load_data(file):
+#    try:
+#        df = pd.read_csv(file, index_col=0)
+#        df['Datetime'] = pd.to_datetime(df['Datetime'])
+#        df = df.dropna()
+#        return df.sort_values('Datetime')
+#    except Exception as e:
+#        st.error(f"Error al cargar los datos: {str(e)}")
+#        return None
+
 def load_data(file):
     try:
         df = pd.read_csv(file, index_col=0)
-        df['Datetime'] = pd.to_datetime(df['Datetime'])
-        df = df.dropna()
-        return df.sort_values('Datetime')
+        
+        # Verificar el formato de las columnas
+        if 'Datetime' in df.columns:
+            df['Datetime'] = pd.to_datetime(df['Datetime'])
+            df = df.dropna()
+            return df.sort_values('Datetime')
+        elif 'Time' in df.columns:
+            df['Time'] = pd.to_datetime(df['Time'])
+            # Renombrar la columna Time a Datetime para mantener consistencia
+            df = df.rename(columns={'Time': 'Datetime'})
+            df = df.dropna()
+            return df.sort_values('Datetime')
+        else:
+            raise ValueError("El archivo debe contener una columna 'Datetime' o 'Time'")
+            
     except Exception as e:
         st.error(f"Error al cargar los datos: {str(e)}")
         return None
-
-
 
 
 
