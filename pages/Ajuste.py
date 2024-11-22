@@ -4,6 +4,7 @@ import pandas as pd
 def load_data(uploaded_file):
     df = pd.read_csv(uploaded_file)
     df['Time'] = pd.to_datetime(df['Time'])
+    df = df.rename(columns={'value': 'Kwh'})
     return df
 
 def main():
@@ -16,18 +17,18 @@ def main():
         
         # Line chart
         st.subheader('Energy Consumption Over Time')
-        st.line_chart(df.set_index('Time')['value'])
+        st.line_chart(df.set_index('Time')['Kwh'])
         
         # Statistics
         st.subheader('Data Statistics')
         col1, col2, col3, col4 = st.columns(4)
         
         with col1:
-            st.metric("Average", f"{df['value'].mean():.2f}")
+            st.metric("Average", f"{df['Kwh'].mean():.2f}")
         with col2:
-            st.metric("Maximum", f"{df['value'].max():.2f}")
+            st.metric("Maximum", f"{df['Kwh'].max():.2f}")
         with col3:
-            st.metric("Minimum", f"{df['value'].min():.2f}")
+            st.metric("Minimum", f"{df['Kwh'].min():.2f}")
         with col4:
             st.metric("Total Records", len(df))
         
