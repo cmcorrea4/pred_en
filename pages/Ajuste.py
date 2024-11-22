@@ -3,8 +3,8 @@ import pandas as pd
 
 def load_data(uploaded_file):
     df = pd.read_csv(uploaded_file)
-    df['Time'] = pd.to_datetime(df['Time'])
-    df = df.rename(columns={'value': 'Kwh'})
+    df = df.rename(columns={'Time': 'Datetime', 'value': 'Kwh'})
+    df['Datetime'] = pd.to_datetime(df['Datetime'])
     return df
 
 def main():
@@ -17,7 +17,7 @@ def main():
         
         # Line chart
         st.subheader('Energy Consumption Over Time')
-        st.line_chart(df.set_index('Time')['Kwh'])
+        st.line_chart(df.set_index('Datetime')['Kwh'])
         
         # Statistics
         st.subheader('Data Statistics')
